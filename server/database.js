@@ -1,6 +1,12 @@
-const sqlite3 = require("sqlite3").verbose();
 
-const db = new sqlite3.Database("./tasks.db", (err) => {
+const sqlite3 = require("sqlite3").verbose();
+const path = require("path");
+
+const databasePath = process.env.TASKS_DB_PATH
+  ? path.resolve(process.env.TASKS_DB_PATH)
+  : path.join(__dirname, "tasks.db");
+
+const db = new sqlite3.Database(databasePath, (err) => {
   if (err) {
     console.error("Database connection failed:", err.message);
   } else {
