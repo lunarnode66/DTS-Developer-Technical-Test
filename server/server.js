@@ -296,4 +296,36 @@ if (require.main === module) {
   });
 }
 
+
+ // Handle errors from JSON parsing and other middleware.
+ app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({
+      error: "Invalid JSON in request body.",
+    });
+  }
+
+  console.error("Unexpected API error:", err.message);
+
+  return res.status(err.status || 500).json({
+    error:
+      err.status >= 400 && err.status < 500
+        ? err.message
+        : "An unexpected server error occurred.",
+  });
+});
+
+// Start the server only when this file is run directly.
+// This allows Jest and Supertest to import the app without opening a port.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
 module.exports = app;
+

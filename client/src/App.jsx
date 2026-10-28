@@ -1,6 +1,29 @@
-import { useEffect, useState } from "react";
+
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import "./App.css";
+
+const API_URL = (
+  import.meta.env.VITE_API_URL || "http://localhost:3000"
+).replace(/\/$/, "");
+
+const STATUSES = ["Pending", "In Progress", "Completed"];
+
+function getErrorMessage(error) {
+  if (error.response?.data?.error) {
+    return error.response.data.error;
+  }
+
+  if (error.response) {
+    return `The request failed with status ${error.response.status}. Please try again.`;
+  }
+
+  if (error.request) {
+    return "Unable to connect to the server. Please check that the API is running.";
+  }
+
+  return "Something went wrong. Please try again.";
+}
 
 function App() {
   const [tasks, setTasks] = useState([]);
@@ -8,39 +31,66 @@ function App() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("");
 
-  //
-  // FETCH TASKS
-  //
-  const fetchTasks = async () => {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [processingTaskId, setProcessingTaskId] = useState(null);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
+  // Fetch tasks using the selected filters.
+  const fetchTasks = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage("");
+
     try {
-      const response = await axios.get("http://localhost:3000/tasks", {
+      const response = await axios.get(`${API_URL}/tasks`, {
         params: {
           status: statusFilter || undefined,
-          search: search || undefined,
+          search: search.trim() || undefined,
           sort: sort || undefined,
         },
       });
-  
+
       setTasks(response.data);
     } catch (error) {
-      console.error(error);
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, [statusFilter, search, sort]);
 
-  //
-  // CREATE TASK
-  //
-  const createTask = async (e) => {
-    e.preventDefault();
+  useEffect(() => {
+    fetchTasks();
+  }, [fetchTasks]);
+
+  // Create a task.
+  const createTask = async (event) => {
+    event.preventDefault();
+
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    if (!title.trim()) {
+      setErrorMessage("Please enter a task title.");
+      return;
+    }
+
+    if (!dueDate) {
+      setErrorMessage("Please select a due date and time.");
+      return;
+    }
+
+    setIsSubmitting(true);
 
     try {
-      await axios.post("http://localhost:3000/tasks", {
-        title,
-        description,
+      await axios.post(`${API_URL}/tasks`, {
+        title: title.trim(),
+        description: description.trim(),
         status: "Pending",
         dueDate,
       });
@@ -48,174 +98,214 @@ function App() {
       setTitle("");
       setDescription("");
       setDueDate("");
+      setSuccessMessage("Task created successfully.");
 
-      fetchTasks();
+      await fetchTasks();
     } catch (error) {
-      console.error(error);
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  //
-  // DELETE TASK
-  //
+  // Delete a task.
   const deleteTask = async (id) => {
-    try {
-      await axios.delete(
-        `http://localhost:3000/tasks/${id}`
-      );
+    setErrorMessage("");
+    setSuccessMessage("");
+    setProcessingTaskId(id);
 
-      fetchTasks();
+    try {
+      await axios.delete(`${API_URL}/tasks/${id}`);
+
+      setSuccessMessage("Task deleted successfully.");
+      await fetchTasks();
     } catch (error) {
-      console.error(error);
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setProcessingTaskId(null);
     }
   };
 
-  //
-  // UPDATE STATUS
-  //
+  // Move a task to its next status.
   const updateStatus = async (id, currentStatus) => {
-    let newStatus = "Pending";
+    const currentIndex = STATUSES.indexOf(currentStatus);
+    const newStatus = STATUSES[(currentIndex + 1) % STATUSES.length];
 
-    if (currentStatus === "Pending") {
-      newStatus = "In Progress";
-    } else if (currentStatus === "In Progress") {
-      newStatus = "Completed";
-    }
+    setErrorMessage("");
+    setSuccessMessage("");
+    setProcessingTaskId(id);
 
     try {
-      await axios.patch(
-        `http://localhost:3000/tasks/${id}`,
-        {
-          status: newStatus,
-        }
-      );
+      await axios.patch(`${API_URL}/tasks/${id}`, {
+        status: newStatus,
+      });
 
-      fetchTasks();
+      setSuccessMessage(`Task status changed to ${newStatus}.`);
+      await fetchTasks();
     } catch (error) {
-      console.error(error);
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setProcessingTaskId(null);
     }
   };
 
-  useEffect(() => {
-    fetchTasks();
-  }, [statusFilter, search, sort]);
+  const resetFilters = () => {
+    setSearch("");
+    setStatusFilter("");
+    setSort("");
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
 
   return (
-    <div className="container">
+    <main className="container">
       <h1>Task Manager</h1>
 
+      {errorMessage && (
+        <div className="error-message" role="alert">
+          {errorMessage}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="success-message" role="status">
+          {successMessage}
+        </div>
+      )}
+
       <form onSubmit={createTask}>
+        <label htmlFor="task-title">Task title</label>
         <input
+          id="task-title"
           type="text"
           placeholder="Task title"
           value={title}
-          onChange={(e) =>
-            setTitle(e.target.value)
-          }
+          onChange={(event) => setTitle(event.target.value)}
+          maxLength={200}
           required
         />
 
+        <label htmlFor="task-description">Description (optional)</label>
         <textarea
+          id="task-description"
           placeholder="Description"
           value={description}
-          onChange={(e) =>
-            setDescription(e.target.value)
-          }
+          onChange={(event) => setDescription(event.target.value)}
         />
 
+        <label htmlFor="task-due-date">Due date and time</label>
         <input
-          type="date"
+          id="task-due-date"
+          type="datetime-local"
           value={dueDate}
-          onChange={(e) =>
-            setDueDate(e.target.value)
-          }
+          onChange={(event) => setDueDate(event.target.value)}
           required
         />
 
-        <button type="submit">
-          Create Task
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Creating task..." : "Create Task"}
         </button>
       </form>
 
-      <div className="filters">
-  <input
-    type="text"
-    placeholder="Search tasks..."
-    value={search}
-    onChange={(e) => setSearch(e.target.value)}
-  />
+      <section className="filters" aria-label="Task filters">
+        <label htmlFor="task-search">Search tasks</label>
+        <input
+          id="task-search"
+          type="search"
+          placeholder="Search by title..."
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
 
-  <select
-    value={statusFilter}
-    onChange={(e) => setStatusFilter(e.target.value)}
-  >
-    <option value="">All Statuses</option>
-    <option value="Pending">Pending</option>
-    <option value="In Progress">In Progress</option>
-    <option value="Completed">Completed</option>
-  </select>
+        <label htmlFor="status-filter">Filter by status</label>
+        <select
+          id="status-filter"
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+        >
+          <option value="">All Statuses</option>
+          {STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
 
-  <select
-    value={sort}
-    onChange={(e) => setSort(e.target.value)}
-  >
-    <option value="">Default</option>
-    <option value="dueDate">Sort by Due Date</option>
-  </select>
+        <label htmlFor="task-sort">Sort tasks</label>
+        <select
+          id="task-sort"
+          value={sort}
+          onChange={(event) => setSort(event.target.value)}
+        >
+          <option value="">Default</option>
+          <option value="dueDate">Due Date</option>
+          <option value="status">Status</option>
+        </select>
 
-  <button
-    onClick={() => {
-      setSearch("");
-      setStatusFilter("");
-      setSort("");
-    }}
-  >
-    Reset Filters
-  </button>
-</div>
+        <button type="button" onClick={resetFilters}>
+          Reset Filters
+        </button>
+      </section>
 
-      <div className="tasks">
-        {tasks.map((task) => (
-          <div
-            className="task-card"
-            key={task.id}
-          >
-            <h3>{task.title}</h3>
+      <section className="tasks" aria-label="Tasks">
+        <h2>Your Tasks</h2>
 
-            <p>{task.description}</p>
-
+        {isLoading ? (
+          <p role="status">Loading tasks...</p>
+        ) : tasks.length === 0 ? (
+          <p>
+            {search || statusFilter
+              ? "No tasks match your current filters."
+              : "No tasks yet. Create your first task above."}
+          </p>
+        ) : (
+          <>
             <p>
-              <strong>Status:</strong>{" "}
-              {task.status}
+              {tasks.length} {tasks.length === 1 ? "task" : "tasks"} found
             </p>
 
-            <p>
-              <strong>Due:</strong>{" "}
-              {task.dueDate}
-            </p>
+            {tasks.map((task) => {
+              const isProcessing = processingTaskId === task.id;
 
-            <button
-              onClick={() =>
-                updateStatus(
-                  task.id,
-                  task.status
-                )
-              }
-            >
-              Update Status
-            </button>
+              return (
+                <article className="task-card" key={task.id}>
+                  <h3>{task.title}</h3>
 
-            <button
-              onClick={() =>
-                deleteTask(task.id)
-              }
-            >
-              Delete
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
+                  {task.description && <p>{task.description}</p>}
+
+                  <p>
+                    <strong>Status:</strong> {task.status}
+                  </p>
+
+                  <p>
+                    <strong>Due:</strong>{" "}
+                    {task.dueDate.replace("T", " ")}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => updateStatus(task.id, task.status)}
+                    disabled={isProcessing || isLoading}
+                    aria-label={`Change status for ${task.title}`}
+                  >
+                    {isProcessing ? "Updating..." : "Update Status"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteTask(task.id)}
+                    disabled={isProcessing || isLoading}
+                    aria-label={`Delete ${task.title}`}
+                  >
+                    {isProcessing ? "Please wait..." : "Delete"}
+                  </button>
+                </article>
+              );
+            })}
+          </>
+        )}
+      </section>
+    </main>
   );
 }
 

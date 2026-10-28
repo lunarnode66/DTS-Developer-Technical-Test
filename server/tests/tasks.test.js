@@ -353,4 +353,24 @@ describe("Task API", () => {
       expect(response.body.error).toBeDefined();
     });
   });
+
+  describe("Request error handling", () => {
+    it("rejects malformed JSON with a 400 response", async () => {
+      const response = await request(app)
+        .post("/tasks")
+        .set("Content-Type", "application/json")
+        .send('{"title":');
+
+      expect(response.status).toBe(400);
+    });
+
+    it("rejects an array as a task request body", async () => {
+      const response = await request(app)
+        .post("/tasks")
+        .send([]);
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty("error");
+    });
+  });
 });
