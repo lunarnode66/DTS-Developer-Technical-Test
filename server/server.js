@@ -1,3 +1,4 @@
+
 const express = require("express");
 const cors = require("cors");
 const db = require("./database");
@@ -5,65 +6,107 @@ const db = require("./database");
 const app = express();
 const PORT = 3000;
 
-//
-// MIDDLEWARE
-//
-app.use(cors({
-  origin: "http://localhost:5173"
-}));
+const validStatuses = ["Pending", "In Progress", "Completed"];
 
+app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
 
-//
-// HEALTH CHECK
-//
+// Validation helpers
+function isValidTaskId(id) {
+  return /^\d+$/.test(id) &&
+    Number.isSafeInteger(Number(id)) &&
+    Number(id) > 0;
+}
+
+function isValidDueDate(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  // Accept the YYYY-MM-DDTHH:mm format used by datetime-local,
+  // with optional seconds and milliseconds.
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/
+  );
+
+  if (!match) {
+    return false;
+  }
+
+  const [
+    ,
+    yearString,
+    monthString,
+    dayString,
+    hourString,
+    minuteString,
+    secondString = "0",
+    millisecondString = "0",
+  ] = match;
+
+  const year = Number(yearString);
+  const month = Number(monthString);
+  const day = Number(dayString);
+  const hour = Number(hourString);
+  const minute = Number(minuteString);
+  const second = Number(secondString);
+  const millisecond = Number(millisecondString.padEnd(3, "0"));
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return false;
+  }
+
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second, millisecond);
+
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second &&
+    date.getUTCMilliseconds() === millisecond
+  );
+}
+
+function isValidRequestBody(body) {
+  return (
+    body !== null &&
+    typeof body === "object" &&
+    !Array.isArray(body)
+  );
+}
+
+// Health check
 app.get("/", (req, res) => {
-  res.json({
-    message: "Task API is running"
-  });
+  res.status(200).json({ message: "Task API is running" });
 });
 
-//
-// VALID STATUSES
-//
-const validStatuses = [
-  "Pending",
-  "In Progress",
-  "Completed"
-];
-
-//
-// GET ALL TASKS
-// Supports:
-// - Filtering
-// - Searching
-// - Sorting
-//
+// Get all tasks, with optional filtering and sorting
 app.get("/tasks", (req, res) => {
   const { status, search, sort } = req.query;
 
   let sql = "SELECT * FROM tasks WHERE 1=1";
-  let params = [];
+  const params = [];
 
-  //
-  // FILTER BY STATUS
-  //
   if (status) {
     sql += " AND status = ?";
     params.push(status);
   }
 
-  //
-  // SEARCH BY TITLE
-  //
   if (search) {
     sql += " AND title LIKE ?";
     params.push(`%${search}%`);
   }
 
-  //
-  // SORTING
-  //
   if (sort === "dueDate") {
     sql += " ORDER BY dueDate ASC";
   } else if (sort === "status") {
@@ -74,65 +117,62 @@ app.get("/tasks", (req, res) => {
 
   db.all(sql, params, (err, rows) => {
     if (err) {
-      return res.status(500).json({
-        error: err.message,
-      });
+      return res.status(500).json({ error: err.message });
     }
 
-    res.json(rows);
+    return res.status(200).json(rows);
   });
 });
 
-//
-// GET TASK BY ID
-//
+// Get a task by ID
 app.get("/tasks/:id", (req, res) => {
   const { id } = req.params;
 
-  db.get(
-    "SELECT * FROM tasks WHERE id = ?",
-    [id],
-    (err, row) => {
-      if (err) {
-        return res.status(500).json({
-          error: err.message,
-        });
-      }
-
-      if (!row) {
-        return res.status(404).json({
-          error: "Task not found",
-        });
-      }
-
-      res.json(row);
-    }
-  );
-});
-
-//
-// CREATE TASK
-//
-app.post("/tasks", (req, res) => {
-  if (!req.body) {
+  if (!isValidTaskId(id)) {
     return res.status(400).json({
-      error: "Request body is required",
+      error: "Task ID must be a positive integer.",
     });
   }
 
-  const {
-    title,
-    description = "",
-    status,
-    dueDate
-  } = req.body;
+  db.get("SELECT * FROM tasks WHERE id = ?", [id], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
 
-  //
-  // VALIDATION
-  //
-  if (!title || !status || !dueDate) {
+    if (!row) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    return res.status(200).json(row);
+  });
+});
+
+// Create a task
+app.post("/tasks", (req, res) => {
+  const body = req.body;
+
+  if (!isValidRequestBody(body)) {
+    return res.status(400).json({
+      error: "A valid request body is required.",
+    });
+  }
+
+  const { title, description = "", status, dueDate } = body;
+
+  if (
+    typeof title !== "string" ||
+    !title.trim() ||
+    !status ||
+    !dueDate
+  ) {
     return res.status(400).json({
       error: "Title, status, and due date are required.",
+    });
+  }
+
+  if (typeof description !== "string") {
+    return res.status(400).json({
+      error: "Description must be a string.",
     });
   }
 
@@ -142,29 +182,30 @@ app.post("/tasks", (req, res) => {
     });
   }
 
+  if (!isValidDueDate(dueDate)) {
+    return res.status(400).json({
+      error: "Due date must be a valid date and time in YYYY-MM-DDTHH:mm format.",
+    });
+  }
+
+  const trimmedTitle = title.trim();
+
   const sql = `
-    INSERT INTO tasks (
-      title,
-      description,
-      status,
-      dueDate
-    )
+    INSERT INTO tasks (title, description, status, dueDate)
     VALUES (?, ?, ?, ?)
   `;
 
   db.run(
     sql,
-    [title, description, status, dueDate],
+    [trimmedTitle, description, status, dueDate],
     function (err) {
       if (err) {
-        return res.status(500).json({
-          error: err.message,
-        });
+        return res.status(500).json({ error: err.message });
       }
 
-      res.status(201).json({
+      return res.status(201).json({
         id: this.lastID,
-        title,
+        title: trimmedTitle,
         description,
         status,
         dueDate,
@@ -173,16 +214,24 @@ app.post("/tasks", (req, res) => {
   );
 });
 
-//
-// UPDATE TASK STATUS
-//
+// Update a task's status
 app.patch("/tasks/:id", (req, res) => {
   const { id } = req.params;
+
+  if (!isValidTaskId(id)) {
+    return res.status(400).json({
+      error: "Task ID must be a positive integer.",
+    });
+  }
+
+  if (!isValidRequestBody(req.body)) {
+    return res.status(400).json({
+      error: "A valid request body is required.",
+    });
+  }
+
   const { status } = req.body;
 
-  //
-  // VALIDATION
-  //
   if (!status) {
     return res.status(400).json({
       error: "Status is required.",
@@ -200,56 +249,47 @@ app.patch("/tasks/:id", (req, res) => {
     [status, id],
     function (err) {
       if (err) {
-        return res.status(500).json({
-          error: err.message,
-        });
+        return res.status(500).json({ error: err.message });
       }
 
       if (this.changes === 0) {
-        return res.status(404).json({
-          error: "Task not found",
-        });
+        return res.status(404).json({ error: "Task not found" });
       }
 
-      res.json({
+      return res.status(200).json({
         message: "Task updated successfully",
       });
     }
   );
 });
 
-//
-// DELETE TASK
-//
+// Delete a task
 app.delete("/tasks/:id", (req, res) => {
   const { id } = req.params;
 
-  db.run(
-    "DELETE FROM tasks WHERE id = ?",
-    [id],
-    function (err) {
-      if (err) {
-        return res.status(500).json({
-          error: err.message,
-        });
-      }
+  if (!isValidTaskId(id)) {
+    return res.status(400).json({
+      error: "Task ID must be a positive integer.",
+    });
+  }
 
-      if (this.changes === 0) {
-        return res.status(404).json({
-          error: "Task not found",
-        });
-      }
-
-      res.json({
-        message: "Task deleted successfully",
-      });
+  db.run("DELETE FROM tasks WHERE id = ?", [id], function (err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
     }
-  );
+
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
+    return res.status(200).json({
+      message: "Task deleted successfully",
+    });
+  });
 });
 
-//
-// START SERVER
-//
+// Start the server only when this file is run directly.
+// This allows Jest and Supertest to import the app without opening a port.
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);

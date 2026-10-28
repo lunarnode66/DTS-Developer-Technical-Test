@@ -11,7 +11,7 @@ const testDirectory = fs.mkdtempSync(
 
 process.env.TASKS_DB_PATH = path.join(testDirectory, "tasks.db");
 
-// Set the database path BEFORE importing the application.
+// Set the database path before importing the application.
 const app = require("../server");
 const db = require("../database");
 
@@ -24,9 +24,7 @@ const validTask = (overrides = {}) => ({
 });
 
 const createTask = async (overrides = {}) => {
-  return request(app)
-    .post("/tasks")
-    .send(validTask(overrides));
+  return request(app).post("/tasks").send(validTask(overrides));
 };
 
 afterAll(async () => {
@@ -145,8 +143,9 @@ describe("Task API", () => {
     it("returns a task when its ID exists", async () => {
       const created = await createTask({ title: "Find this task" });
 
-      const response = await request(app)
-        .get(`/tasks/${created.body.id}`);
+      const response = await request(app).get(
+        `/tasks/${created.body.id}`
+      );
 
       expect(response.status).toBe(200);
       expect(response.body.id).toBe(created.body.id);
@@ -159,6 +158,16 @@ describe("Task API", () => {
       expect(response.status).toBe(404);
       expect(response.body.error).toBe("Task not found");
     });
+
+    it.each(["abc", "1.5", "-1", "0"])(
+      "rejects an invalid task ID: %s",
+      async (id) => {
+        const response = await request(app).get(`/tasks/${id}`);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error).toBeDefined();
+      }
+    );
   });
 
   describe("POST /tasks", () => {
@@ -201,6 +210,47 @@ describe("Task API", () => {
       expect(response.body.error).toBeDefined();
     });
 
+    it("rejects a title containing only whitespace", async () => {
+      const response = await createTask({ title: "   " });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
+    });
+
+    it("rejects a title that is not a string", async () => {
+      const response = await createTask({ title: 123 });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
+    });
+
+    it("rejects a description that is not a string", async () => {
+      const response = await createTask({
+        description: { text: "Invalid" },
+      });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
+    });
+
+    it("rejects a due date that is not a string", async () => {
+      const response = await createTask({ dueDate: 12345 });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
+    });
+
+    it.each([
+      "not-a-date",
+      "2027-02-30T10:00:00",
+      "2027-13-01T10:00:00",
+    ])("rejects an invalid due date: %s", async (dueDate) => {
+      const response = await createTask({ dueDate });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
+    });
+
     it.each(["Unknown", "Done", "Cancelled"])(
       "rejects invalid status %s",
       async (status) => {
@@ -223,8 +273,9 @@ describe("Task API", () => {
       expect(response.status).toBe(200);
       expect(response.body.message).toBe("Task updated successfully");
 
-      const updated = await request(app)
-        .get(`/tasks/${created.body.id}`);
+      const updated = await request(app).get(
+        `/tasks/${created.body.id}`
+      );
 
       expect(updated.body.status).toBe("In Progress");
     });
@@ -259,20 +310,31 @@ describe("Task API", () => {
       expect(response.status).toBe(404);
       expect(response.body.error).toBe("Task not found");
     });
+
+    it("rejects an invalid task ID when updating", async () => {
+      const response = await request(app)
+        .patch("/tasks/abc")
+        .send({ status: "Completed" });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
+    });
   });
 
   describe("DELETE /tasks/:id", () => {
     it("deletes an existing task", async () => {
       const created = await createTask();
 
-      const response = await request(app)
-        .delete(`/tasks/${created.body.id}`);
+      const response = await request(app).delete(
+        `/tasks/${created.body.id}`
+      );
 
       expect(response.status).toBe(200);
       expect(response.body.message).toBe("Task deleted successfully");
 
-      const lookup = await request(app)
-        .get(`/tasks/${created.body.id}`);
+      const lookup = await request(app).get(
+        `/tasks/${created.body.id}`
+      );
 
       expect(lookup.status).toBe(404);
     });
@@ -282,6 +344,13 @@ describe("Task API", () => {
 
       expect(response.status).toBe(404);
       expect(response.body.error).toBe("Task not found");
+    });
+
+    it("rejects an invalid task ID when deleting", async () => {
+      const response = await request(app).delete("/tasks/abc");
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBeDefined();
     });
   });
 });
